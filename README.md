@@ -19,19 +19,19 @@ This diagram illustrates how the agent handles user requests:
 
 ```mermaid
 graph LR
-    A[👤 User Query] --> B{🤖 Gent Agent (agent.py)};
-    B --> C{❓ Understand Intent & Select Tool};
-    C -->|Query Gent Services| D[🔨 Tool: query_gent_knowledge_base_tool];
-    C -->|Check Disruptions| E[🔨 Tool: get_transport_disruptions_tool];
-    C -->|Get Schedule| F[🔨 Tool: get_transport_schedule_tool];
-    D --> G[☁️ Cloud Function: query-gent-services-kb];
-    E --> H[☁️ Cloud Function: get-transport-disruptions];
-    F --> I[☁️ Cloud Function: get-transport-schedule];
-    G -- RAG Result --> J{✅ Process Result};
+    A[👤 User Query] --> B{"🤖 Gent Agent (agent.py)"};
+    B --> C{"❓ Understand Intent & Select Tool"};
+    C -->|Query Gent Services| D["🔨 Tool: query_gent_knowledge_base_tool"];
+    C -->|Check Disruptions| E["🔨 Tool: get_transport_disruptions_tool"];
+    C -->|Get Schedule| F["🔨 Tool: get_transport_schedule_tool"];
+    D --> G["☁️ Cloud Function: query-gent-services-kb"];
+    E --> H["☁️ Cloud Function: get-transport-disruptions"];
+    F --> I["☁️ Cloud Function: get-transport-schedule"];
+    G -- RAG Result --> J{"✅ Process Result"};
     H -- Disruption Info --> J;
     I -- Schedule Info --> J;
-    J --> K[💬 Formulate Response];
-    K --> L[🗣️ Response to User];
+    J --> K["💬 Formulate Response"];
+    K --> L["🗣️ Response to User"];
 ```
 
 ## 📁 Project Structure
