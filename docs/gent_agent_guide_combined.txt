@@ -1,0 +1,464 @@
+Building a Task Automation Agent with Vertex AI ADK (Step-by-Step Guide)
+1. Setting Up the Development Environment for Vertex AI ADK
+Project and API Setup: Begin by creating a Google Cloud project (or use an existing one) and enable the Vertex AI API
+cloud.google.com
+cloud.google.com
+. Ensure billing is enabled on the project. Next, install and initialize the Google Cloud SDK (gcloud CLI) and log in:
+bash
+Copy
+Edit
+# Update gcloud and authenticate with Application Default Credentials (ADC)
+gcloud components update
+gcloud auth application-default login   # opens browser to authenticate
+This creates local credentials that Vertex AI will use for API calls
+cloud.google.com
+. It’s important to use ADC or a service account because Vertex AI uses IAM for auth instead of simple API keys
+cloud.google.com
+. Python Environment: Install Python 3.10+ and set up a virtual environment (e.g., using python -m venv .venv and activating it). Then install the Vertex AI Agent Development Kit (ADK) package:
+bash
+Copy
+Edit
+pip install google-adk
+This will pull in the ADK and its dependencies
+cloud.google.com
+cloud.google.com
+. Authentication: Make sure your environment is authenticated to Google Cloud (via ADC as above, or by setting the GOOGLE_APPLICATION_CREDENTIALS to a service account key if running in a VM or CI environment). For local development, the gcloud auth application-default login step above suffices to let ADK and Google Cloud libraries access Vertex AI. Project Configuration: In your code working directory, create a .env file to set your project ID and region for Vertex AI. For example:
+bash
+Copy
+Edit
+GOOGLE_CLOUD_PROJECT="your-gcp-project-id"
+GOOGLE_CLOUD_LOCATION="us-central1"       # region for Vertex AI (e.g., us-central1)
+GOOGLE_GENAI_USE_VERTEXAI="True"         # instructs ADK to use Vertex AI endpoints
+These environment variables will ensure the ADK uses your Google Cloud project and Vertex AI endpoints
+cloud.google.com
+.
+2. Building a Retrieval-Augmented Generation (RAG) Knowledge Base for Gent Services
+What is RAG? Retrieval-Augmented Generation is a technique where an LLM-based agent retrieves relevant information from an external knowledge base to ground its responses. It works by converting text documents into vector embeddings and using vector similarity search to find documents related to a user query
+cloud.google.com
+. In our case, we will create a simple knowledge base containing information about various City of Gent services and enable the agent to query it. Preparing the Knowledge Base: Gather a set of documents (text data) that represent the knowledge base. For example, you might compile information sheets about waste collection schedules, permit application procedures, opening hours for city offices, library services, or details about local parks in Gent. Each document should have a title or ID and a content body (a few paragraphs of text). Store these documents in a list or a simple database. In a real application, you could use a database like Firestore or Cloud SQL, or even files in Cloud Storage, coupled with a vector index. Generating Embeddings: Use Vertex AI’s text embedding model to convert each document into a vector. Vertex provides models like textembedding-gecko (or newer versions like text-embedding-005) that turn text into high-dimensional vectors suitable for semantic search. You can call the embedding model via the Vertex AI SDK for Python. For example:
+python
+Copy
+Edit
+from google.cloud import aiplatform
+
+# Initialize the embedding model
+embedding_model = aiplatform.TextEmbeddingModel.from_pretrained("textembedding-gecko@001")
+documents = [ "Gent Waste Collection: Paper and cardboard are collected bi-weekly on Tuesdays...", 
+              "Applying for a Building Permit in Gent: Submit your plans via the online portal...", 
+              "Gent City Hall Opening Hours: Monday to Friday, 9:00 AM to 12:30 PM..." ]
+# Compute embeddings for each document
+doc_embeddings = embedding_model.get_embeddings(documents)
+# doc_embeddings is a list of vector embeddings (e.g., 768-dimensional floats)
+Each document’s embedding vector is a numerical representation of its content. In practice, you would store these vectors in a vector database or index for efficient similarity search. Google Cloud offers several options to host the vector store:
+BigQuery Vector Search: BigQuery can store vectors and has a VECTOR_SEARCH function for similarity queries
+cloud.google.com
+. For example, you could create a BigQuery table with a VECTOR column for embeddings and use SQL to find the nearest vectors to a query embedding.
+Vertex AI Matching Engine: a managed vector database that can index embeddings and perform approximate nearest neighbor searches at scale
+cloud.google.com
+.
+DIY or Third-party: You could also use open-source libraries (FAISS, Weaviate, etc.) hosted on GCP, but using BigQuery or Matching Engine is more seamless on Google Cloud.
+(Optional) Using BigQuery for the Vector Store: If you choose BigQuery, define a table schema with an embedding column of type FLOAT64[] or the new VECTOR type, and a content or document_text column. Insert each document’s embedding and text into the table. You can then run queries like:
+sql
+Copy
+Edit
+SELECT content 
+FROM `your_project.your_dataset.gent_services_kb` 
+ORDER BY VECTOR_DISTANCE(embedding, GENERATE_ARRAY(...), 'COSINE') ASC 
+LIMIT 3;
+In the above, GENERATE_ARRAY(...) would be replaced with the query embedding vector (as an array of floats), and VECTOR_DISTANCE(..., 'COSINE') is used to rank results by cosine similarity (assuming your embeddings are normalized) – returning the top 3 most similar documents. This is the retrieval step of RAG. For our simple agent, we will keep things straightforward by embedding and searching a small set of documents in memory. In a production scenario, you would offload this to a service like BigQuery or Matching Engine for scale and persistence.
+3. Developing Cloud Functions as Agent Tools
+We will create three Cloud Functions (HTTP-triggered) to serve as the agent’s tools:
+1.  **query_gent_services_kb:** For querying the internal RAG knowledge base about city services.
+2.  **get_transport_disruptions:** For retrieving information about current strikes, delays, or other problems affecting public transport in Gent using the De Lijn Open Data API.
+3.  **get_transport_schedule:** For retrieving schedule information (e.g., next departures) for specific stops or lines in Gent using the De Lijn Open Data API.
+Each function will be a small Python service. Below, we outline each function’s implementation and how to deploy it.
+
+3.1 Cloud Function: query_gent_services_kb (RAG Retrieval)
+This function takes a user query (e.g., "What are the opening hours for the main library?") and returns relevant information from our knowledge base. (Implementation remains the same as previous version - see below)
+python
+Copy
+Edit
+# main_rag.py (for Cloud Function: query_gent_services_kb)
+import functions_framework
+from google.cloud import aiplatform
+import numpy as np
+
+# Sample in-memory knowledge base (in practice, use a database or BigQuery)
+DOCUMENTS = [
+    "Gent Waste Collection: Paper and cardboard are collected bi-weekly on Tuesdays...",
+    "Applying for a Building Permit in Gent: Submit your plans via the online portal...",
+    "Gent City Hall Opening Hours: Monday to Friday, 9:00 AM to 12:30 PM...",
+    "Main Library De Krook Hours: Open Tuesday-Saturday 10 AM - 7 PM...",
+]
+# Pre-compute embeddings for the documents at startup (cold start)
+embedding_model = aiplatform.TextEmbeddingModel.from_pretrained("textembedding-gecko@001")
+DOC_EMBEDDINGS = embedding_model.get_embeddings(DOCUMENTS)
+
+@functions_framework.http
+def query_gent_services_kb(request):
+    # ... (rest of implementation is the same as v3) ...
+    request_json = request.get_json(silent=True)
+    query = None
+    if request.args and 'query' in request.args:
+        query = request.args.get('query')
+    elif request_json and 'query' in request_json:
+        query = request_json['query']
+    if not query:
+        return ("Missing 'query' parameter", 400)
+    query_embedding = embedding_model.get_embeddings([query])[0]
+    def cosine_similarity(a, b):
+        vec_a = np.array(a.values)
+        vec_b = np.array(b.values)
+        norm_a = np.linalg.norm(vec_a)
+        norm_b = np.linalg.norm(vec_b)
+        if norm_a == 0 or norm_b == 0: return 0.0
+        return float(np.dot(vec_a, vec_b) / (norm_a * norm_b))
+    scores = [cosine_similarity(query_embedding, doc_vec) for doc_vec in DOC_EMBEDDINGS]
+    best_index = int(np.argmax(scores))
+    best_answer = DOCUMENTS[best_index]
+    return { "status": "success", "answer": best_answer }
+
+Deploying the Function: (Same as v3)
+bash
+Copy
+Edit
+gcloud functions deploy query_gent_services_kb \
+    --runtime python311 --trigger-http --allow-unauthenticated \
+    --region=us-central1 --source=. --entry-point=query_gent_services_kb
+
+3.2 Researching and Implementing De Lijn API Tools
+Before building tools using external APIs, research is crucial. For Gent transport data (disruptions and schedules), De Lijn is the primary source.
+API Research Findings (Summary):
+*   **Source:** De Lijn Open Data Portal (https://data.delijn.be/).
+*   **Relevant Data:** The free product ("Open Data Free Subscribe Here") includes "Interruptions," "Detour messages," "Schedule information," and "Real-time information."
+*   **Access Requirement:** Developers **must** register on the portal and subscribe to the free product to get API keys and access detailed technical documentation.
+*   **Authentication:** Requires an API key (Subscription Key) in the `Ocp-Apim-Subscription-Key` header.
+*   **Endpoints:** Detailed endpoints for disruptions and schedules are within the "Open Data V1 Core API" and "Open Data V1 Search API" but require login/subscription to view.
+
+**Important:** The following Cloud Function examples use **illustrative** endpoints and data structures based on the research. You **must** consult the official De Lijn documentation after subscribing for the correct implementation details.
+
+3.3 Cloud Function: get_transport_disruptions (De Lijn API)
+This tool checks for current disruptions (strikes, delays). (Implementation mostly the same as v3, minor adjustments for clarity)
+python
+Copy
+Edit
+# main_transport.py (can contain both disruption and schedule functions)
+import functions_framework
+import os, requests
+
+DE_LIJN_API_KEY = os.environ.get("DE_LIJN_API_KEY") 
+DE_LIJN_API_BASE_URL = os.environ.get("DE_LIJN_API_BASE_URL", "https://api.delijn.be/v1") # Example URL
+
+@functions_framework.http
+def get_transport_disruptions(request):
+    # ... (rest of implementation is the same as v3, including error handling) ...
+    if not DE_LIJN_API_KEY: return {"status": "error", "error_message": "API key is not configured."}, 500
+    request_json = request.get_json(silent=True)
+    query_filter = None 
+    if request.args and 'filter' in request.args: query_filter = request.args.get('filter')
+    elif request_json and 'filter' in request_json: query_filter = request_json['filter']
+    headers = { "Ocp-Apim-Subscription-Key": DE_LIJN_API_KEY }
+    endpoint = f"{DE_LIJN_API_BASE_URL}/disruptions" # CONSULT DOCS
+    params = { "area": "Gent" } # CONSULT DOCS
+    if query_filter: params['query'] = query_filter
+    try:
+        response = requests.get(endpoint, headers=headers, params=params, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+        disruptions = data.get("interruptions", []) + data.get("detours", []) # CONSULT DOCS for actual keys
+        if disruptions:
+            formatted_disruptions = [f"{d.get('type', 'Disruption')}: {d.get('details', 'No details')}" for d in disruptions] # CONSULT DOCS
+            return { "status": "success", "disruptions": formatted_disruptions }
+        else:
+            return { "status": "success", "disruptions": [], "message": "No current disruptions reported for Gent matching your query." }
+    # ... (Error handling for Timeout, HTTPError, RequestException, Exception as in v3) ...
+    except requests.exceptions.Timeout: return { "status": "error", "error_message": "The request to the De Lijn API timed out." }, 504
+    except requests.exceptions.HTTPError as e: 
+        # ... (detailed HTTP error handling as in v3) ...
+        error_message = f"De Lijn API request failed with status {e.response.status_code}: {e.response.text[:200]}"
+        print(error_message)
+        status_code = e.response.status_code
+        user_message = f"Could not retrieve disruption data from De Lijn (Error {status_code})."
+        if status_code == 401 or status_code == 403: user_message = "Authentication failed with the De Lijn API. Please check the API key."
+        elif status_code == 429: user_message = "Rate limit exceeded for the De Lijn API. Please try again later."
+        return { "status": "error", "error_message": user_message }, status_code
+    except requests.exceptions.RequestException as e: return { "status": "error", "error_message": "Could not connect to the De Lijn API." }, 502
+    except Exception as e: print(f"Unexpected error: {str(e)}"); return { "status": "error", "error_message": f"An unexpected internal error occurred." }, 500
+
+Deploying the Function: (Same command as v3, ensure DE_LIJN_API_KEY is set)
+bash
+Copy
+Edit
+gcloud functions deploy get_transport_disruptions \
+    --runtime python311 --trigger-http --allow-unauthenticated \
+    --region=us-central1 --source=. --entry-point=get_transport_disruptions \
+    --set-env-vars DE_LIJN_API_KEY=YOUR_DE_LIJN_KEY
+
+3.4 Cloud Function: get_transport_schedule (De Lijn API)
+This new tool fetches schedule information (e.g., next departures) for a specific stop or line.
+python
+Copy
+Edit
+# Add this function to main_transport.py
+@functions_framework.http
+def get_transport_schedule(request):
+    if not DE_LIJN_API_KEY:
+        return {"status": "error", "error_message": "API key is not configured."}, 500
+
+    request_json = request.get_json(silent=True)
+    stop_id = None
+    line_number = None
+    # Determine parameters based on request (e.g., stop ID, line number) - CONSULT DOCS
+    if request.args:
+        stop_id = request.args.get('stop_id')
+        line_number = request.args.get('line_number')
+    elif request_json:
+        stop_id = request_json.get('stop_id')
+        line_number = request_json.get('line_number')
+
+    if not stop_id and not line_number:
+        return ("Missing 'stop_id' or 'line_number' parameter", 400)
+
+    headers = { 
+        "Ocp-Apim-Subscription-Key": DE_LIJN_API_KEY 
+    }
+    # Example endpoint & params - CONSULT DOCS FOR CORRECT IMPLEMENTATION
+    params = { "limit": 5 } # Example: get next 5 departures
+    if stop_id:
+        endpoint = f"{DE_LIJN_API_BASE_URL}/stops/{stop_id}/departures" 
+        params['stopIdentifier'] = stop_id # Hypothetical param name
+    elif line_number:
+        endpoint = f"{DE_LIJN_API_BASE_URL}/lines/{line_number}/schedule" 
+        params['lineNumber'] = line_number # Hypothetical param name
+    else:
+         return ("Invalid parameters for schedule lookup", 400) # Should not happen due to check above
+
+    try:
+        response = requests.get(endpoint, headers=headers, params=params, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+
+        # Process the response - STRUCTURE IS HYPOTHETICAL - CONSULT DOCS
+        # Assume 'data' contains schedule info, e.g., a list of departures
+        schedule_info = data.get("departures", []) # Example key
+
+        if schedule_info:
+            # Format schedule info as needed
+            formatted_schedule = [f"Line {d.get('line', '?')} at {d.get('time', '?')} to {d.get('destination', '?')}" for d in schedule_info] # Example
+            return { "status": "success", "schedule": formatted_schedule }
+        else:
+            return { "status": "success", "schedule": [], "message": "No schedule information found for the specified stop/line." }
+
+    # ... (Error handling similar to get_transport_disruptions: Timeout, HTTPError, RequestException, Exception) ...
+    except requests.exceptions.Timeout: return { "status": "error", "error_message": "The request to the De Lijn API timed out." }, 504
+    except requests.exceptions.HTTPError as e: 
+        error_message = f"De Lijn API request failed with status {e.response.status_code}: {e.response.text[:200]}"
+        print(error_message)
+        status_code = e.response.status_code
+        user_message = f"Could not retrieve schedule data from De Lijn (Error {status_code})."
+        if status_code == 401 or status_code == 403: user_message = "Authentication failed with the De Lijn API. Please check the API key."
+        elif status_code == 429: user_message = "Rate limit exceeded for the De Lijn API. Please try again later."
+        return { "status": "error", "error_message": user_message }, status_code
+    except requests.exceptions.RequestException as e: return { "status": "error", "error_message": "Could not connect to the De Lijn API." }, 502
+    except Exception as e: print(f"Unexpected error: {str(e)}"); return { "status": "error", "error_message": f"An unexpected internal error occurred." }, 500
+
+Deploying the Function: (Use a different function name)
+bash
+Copy
+Edit
+gcloud functions deploy get_transport_schedule \
+    --runtime python311 --trigger-http --allow-unauthenticated \
+    --region=us-central1 --source=. --entry-point=get_transport_schedule \
+    --set-env-vars DE_LIJN_API_KEY=YOUR_DE_LIJN_KEY
+
+4. Configuring IAM Permissions and Credentials
+(Same as v3 - ensure service accounts have necessary roles, APIs are enabled, keys/secrets handled securely, invocation permissions set correctly for *all three* functions if not using unauthenticated access).
+
+5. Writing the Vertex AI ADK Agent Definition
+Now we define the agent with three tools: city services, transport disruptions, and transport schedules.
+Tool Function Definitions: Define Python functions wrapping calls to the three Cloud Functions.
+python
+Copy
+Edit
+import requests
+from google.adk.agent import Agent
+from google.adk.tools import FunctionTool
+import os
+
+# Get Cloud Function URLs (replace or use env vars)
+QUERY_KB_URL = os.environ.get("QUERY_KB_FUNCTION_URL", "https://us-central1-YOUR_PROJECT.cloudfunctions.net/query_gent_services_kb")
+TRANSPORT_DISRUPTION_URL = os.environ.get("TRANSPORT_DISRUPTION_FUNCTION_URL", "https://us-central1-YOUR_PROJECT.cloudfunctions.net/get_transport_disruptions")
+TRANSPORT_SCHEDULE_URL = os.environ.get("TRANSPORT_SCHEDULE_FUNCTION_URL", "https://us-central1-YOUR_PROJECT.cloudfunctions.net/get_transport_schedule") # New URL
+
+def query_gent_knowledge_base_tool(query: str) -> dict:
+    """Queries the internal knowledge base about City of Gent services.
+    Use this tool to find information about city services, regulations, opening hours, 
+    waste collection schedules, permit processes, library info, etc. for Gent.
+    Args:
+        query: The specific question about Gent city services.
+    Returns:
+        A dictionary containing the status and the retrieved information, or an error message.
+    """
+    # ... (Implementation same as v3) ...
+    try:
+        response = requests.post(QUERY_KB_URL, json={'query': query}, timeout=10)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e: return {"status": "error", "error_message": f"Failed to query knowledge base: {str(e)}"}
+    except Exception as e: return {"status": "error", "error_message": "An unexpected error occurred while querying the knowledge base."}
+
+def get_transport_disruptions_tool(filter: str | None = None) -> dict:
+    """Checks for current public transport disruptions in Gent (strikes, delays, route changes) using the De Lijn API.
+    Use this tool ONLY to find out if there are known PROBLEMS or ISSUES with buses or trams in Gent right now.
+    Do NOT use for regular schedule times.
+    Requires developers to register and get an API key from data.delijn.be.
+    Args:
+        filter (Optional[str]): A specific filter for the query (e.g., 'line 1', 'strike'). Consult De Lijn docs.
+    Returns:
+        A dictionary containing the status and a list of current disruptions, or an error message.
+    """
+    # ... (Implementation same as v3) ...
+    payload = {'filter': filter} if filter else {}
+    try:
+        response = requests.post(TRANSPORT_DISRUPTION_URL, json=payload, timeout=20)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        try: error_details = e.response.json()
+        except: error_details = None
+        if isinstance(error_details, dict) and "error_message" in error_details: return {"status": "error", "error_message": error_details['error_message']}
+        return {"status": "error", "error_message": f"Failed to contact the transport disruption service: {str(e)}"}
+    except Exception as e: return {"status": "error", "error_message": "An unexpected error occurred while checking transport disruptions."}
+
+# New tool wrapper for schedules
+def get_transport_schedule_tool(stop_id: str | None = None, line_number: str | None = None) -> dict:
+    """Fetches REGULAR public transport schedule information (like next departure times) for a specific stop or line in Gent using the De Lijn API.
+    Use this tool for standard timetable queries. Do NOT use for disruption information.
+    Requires developers to register and get an API key from data.delijn.be.
+    Args:
+        stop_id (Optional[str]): The ID of the bus/tram stop. Provide EITHER stop_id OR line_number.
+        line_number (Optional[str]): The number of the bus/tram line. Provide EITHER stop_id OR line_number.
+    Returns:
+        A dictionary containing the status and schedule information, or an error message.
+    """
+    payload = {}
+    if stop_id:
+        payload['stop_id'] = stop_id
+    if line_number:
+        payload['line_number'] = line_number
+    if not payload:
+        return {"status": "error", "error_message": "You must provide either a stop_id or a line_number."}
+        
+    try:
+        response = requests.post(TRANSPORT_SCHEDULE_URL, json=payload, timeout=20)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        try: error_details = e.response.json()
+        except: error_details = None
+        if isinstance(error_details, dict) and "error_message" in error_details: return {"status": "error", "error_message": error_details['error_message']}
+        return {"status": "error", "error_message": f"Failed to contact the transport schedule service: {str(e)}"}
+    except Exception as e:
+        print(f"Unexpected error in schedule tool wrapper: {e}")
+        return {"status": "error", "error_message": "An unexpected error occurred while fetching the transport schedule."}
+
+# Convert Python functions into ADK FunctionTool objects
+tool_query_kb = FunctionTool(
+    fn=query_gent_knowledge_base_tool,
+    description="Look up information about Gent city services, procedures, and schedules."
+)
+tool_transport_disruptions = FunctionTool(
+    fn=get_transport_disruptions_tool,
+    description="Check for current public transport DISRUPTIONS (strikes, delays, issues) in Gent using the official De Lijn API."
+)
+# New tool object for schedules
+tool_transport_schedule = FunctionTool(
+    fn=get_transport_schedule_tool,
+    description="Get REGULAR public transport schedule times (e.g., next departures) for a specific stop or line in Gent using the official De Lijn API."
+)
+
+# Define the Agent with three tools
+agent = Agent(
+    name="Gent City Assistant",
+    description="An AI assistant providing information on City of Gent services, current public transport disruptions, and regular transport schedules via De Lijn.",
+    instructions=[
+        "You are a helpful assistant for residents and visitors of Gent, Belgium.",
+        "Use the 'query_gent_knowledge_base_tool' to answer questions about city services like opening hours, waste collection, permits, etc.",
+        "Use the 'get_transport_disruptions_tool' ONLY to check for current PROBLEMS like strikes, delays, or route changes affecting buses and trams in Gent.",
+        "Use the 'get_transport_schedule_tool' ONLY to find REGULAR schedule times or next departures for a specific stop or line.",
+        "Carefully choose between the disruption tool and the schedule tool based on the user's query.",
+        "Inform the user if you need to check with De Lijn for disruption or schedule information.",
+        "If a tool returns an error, inform the user you couldn't retrieve the information and mention the source (e.g., 'De Lijn API').",
+        "If you don't know the answer or the tools don't provide it, say so clearly.",
+        "Be polite and concise."
+    ],
+    model="gemini-1.5-pro-001",  # Specify the LLM model
+    tools=[tool_query_kb, tool_transport_disruptions, tool_transport_schedule] # List all three tools
+)
+
+# Example Usage (updated)
+if __name__ == '__main__':
+    # ... (Load env vars if needed) ...
+    print("Gent City Assistant initialized. Ask about city services, transport disruptions, or schedules.")
+    while True:
+        user_input = input("You: ")
+        if user_input.lower() in ["exit", "quit"]: break
+        if not user_input: continue
+        try:
+            response = agent.generate_content(user_input)
+            if response and response.parts:
+                 final_text = "".join(part.text for part in response.parts if hasattr(part, 'text'))
+                 print(f"Agent: {final_text}")
+            else:
+                 print("Agent: I'm sorry, I couldn't generate a response for that.")
+        except Exception as e:
+            print(f"Agent Error: An error occurred during processing: {e}")
+            print("Agent: I encountered an issue processing your request. Please try again.")
+
+6. Testing and Deployment Considerations
+*   **Tool Testing:** Test *all three* Cloud Functions (`query_gent_services_kb`, `get_transport_disruptions`, `get_transport_schedule`) thoroughly. Use `curl` or Postman with your De Lijn API key. Test different inputs (queries, filters, stop IDs, line numbers) and error conditions for the De Lijn tools.
+*   **Agent Testing:** Test the agent locally. Provide prompts designed to trigger each specific tool: 
+    *   City Services: "What are the library hours?"
+    *   Disruptions: "Are there any bus strikes today?", "Is line 4 delayed?"
+    *   Schedules: "When is the next bus at Gent Zuid?", "What's the schedule for tram 1?"
+    Verify the agent selects the correct tool and handles responses/errors.
+*   **Security:** Use Google Secret Manager for the De Lijn API key in production.
+*   **Scalability:** Consider alternatives to the in-memory RAG for larger knowledge bases. Monitor De Lijn API usage.
+*   **Monitoring & Logging:** Implement logging in all Cloud Functions and use Cloud Logging/Monitoring.
+
+This guide provides a foundation for building a comprehensive Gent City Assistant. Remember that accessing and correctly interpreting the official De Lijn API documentation after subscription is critical for the success of both the transport disruption and schedule tools.
+
+
+
+---
+
+# Appendix: De Lijn API Research Findings for Gent Transport Disruptions & Schedules
+
+**Portal:** De Lijn Open Data Portal (https://data.delijn.be/)
+
+**Relevant Product:** "Open Data Free Subscribe Here" (Product ID: 5978abf6e8b4390cc83196ad)
+
+**Key Data Services Included:**
+*   Interruptions
+*   Detour messages
+*   Real-time information for stops and lines
+*   Schedule information
+*   Stops Nearby
+*   Metadata
+
+**API Endpoints Identified (within the product, but documentation gated):**
+*   Open Data V1 Core API - v1
+*   Open Data V1 Search API - v1
+
+**Access & Authentication:**
+*   Access to detailed API documentation (operations, parameters, data formats) for the Core and Search APIs requires user sign-in and subscription to the "Open Data Free Subscribe Here" product.
+*   Subscription is free but requires registration on the portal.
+*   Upon subscription, users receive an API key (likely an `Ocp-Apim-Subscription-Key` header based on common Azure API Management patterns) needed to authenticate requests.
+
+**Limitations:**
+*   Specific details about the structure of the disruption and schedule data (e.g., how strikes vs. delays are represented, schedule formats, real-time update frequency, specific endpoint paths and parameters) are not available without subscribing and accessing the full documentation.
+*   The portal returned "The specified API does not exist" when trying to view details of the Core and Search APIs without being logged in, confirming access restrictions.
+
+**Conclusion:** De Lijn provides relevant open data APIs for transport interruptions, detours, schedules, and real-time information, suitable for the agent's tools. However, developers **must** register on the portal (https://data.delijn.be/) and subscribe to the free product to obtain API keys and access the necessary technical documentation to implement the `get_transport_disruptions` and `get_transport_schedule` tools effectively.
+
+**Schedule Data:** The same "Open Data Free Subscribe Here" product explicitly lists "Schedule information for stops and lines" and "Real-time information for stops and lines" as included data services. Accessing the specific endpoints and data formats for schedules will also require registration, subscription, and consulting the official documentation obtained after logging in. The Core and Search APIs likely contain the necessary operations.
