@@ -1,0 +1,81 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    font-family: 'Source Sans Pro', Arial, sans-serif;
+  }
+  
+  body {
+    @apply bg-white text-gent-dark-gray;
+  }
+  
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Montserrat', Arial, sans-serif;
+  }
+}
+
+@layer components {
+  .chat-message {
+    @apply animate-slide-up;
+  }
+  
+  .typing-indicator {
+    @apply flex space-x-1;
+  }
+  
+  .typing-dot {
+    @apply w-2 h-2 bg-gent-gray rounded-full animate-pulse;
+    animation-delay: var(--delay);
+  }
+  
+  .gent-gradient {
+    background: linear-gradient(135deg, #0066CC 0%, #003366 100%);
+  }
+  
+  .gent-card {
+    @apply bg-white border border-gray-200 rounded-lg shadow-sm;
+  }
+  
+  .gent-button-primary {
+    @apply bg-gent-primary hover:bg-gent-secondary text-white font-semibold py-2 px-4 rounded transition-colors duration-200;
+  }
+  
+  .gent-button-secondary {
+    @apply bg-white hover:bg-gray-50 text-gent-primary border border-gent-primary font-semibold py-2 px-4 rounded transition-colors duration-200;
+  }
+}
+
+/* Custom scrollbar */
+.chat-container::-webkit-scrollbar {
+  width: 6px;
+}
+
+.chat-container::-webkit-scrollbar-track {
+  @apply bg-gray-100 rounded-full;
+}
+
+.chat-container::-webkit-scrollbar-thumb {
+  @apply bg-gent-primary rounded-full hover:bg-gent-secondary;
+}
+
+/* Smooth transitions */
+* {
+  transition: all 0.2s ease-in-out;
+}
+
+/* Focus styles - Gent accessibility standards */
+button:focus,
+input:focus,
+textarea:focus {
+  @apply outline-none ring-2 ring-gent-primary ring-offset-2;
+}
+
+/* Gent-specific utility classes */
+.text-gent-primary { color: #0066CC; }
+.text-gent-secondary { color: #003366; }
+.text-gent-accent { color: #FF6600; }
+.bg-gent-primary { background-color: #0066CC; }
+.bg-gent-secondary { background-color: #003366; }
+.bg-gent-light { background-color: #E6F2FF; }
