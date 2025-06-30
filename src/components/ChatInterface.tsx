@@ -9,7 +9,7 @@ const ChatInterface: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([
     {
       id: '1',
-      content: "Hallo! Ik ben uw digitale assistent voor de Stad Gent. Ik kan u helpen met informatie over stadsdiensten, openbaar vervoer en actuele verstoringen. Waar kan ik u mee helpen?",
+      content: "Hello! I'm your AI assistant. I can help you with various questions and tasks. How can I assist you today?",
       sender: 'assistant',
       timestamp: new Date(),
     }
@@ -55,7 +55,7 @@ const ChatInterface: React.FC = () => {
     } catch (error) {
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
-        content: "Excuseer, ik ondervind momenteel technische problemen. Probeer het over een moment opnieuw of neem contact op met de stadsdiensten via 09 210 10 10.",
+        content: "Sorry, I'm experiencing technical difficulties. Please try again in a moment or contact support.",
         sender: 'assistant',
         timestamp: new Date(),
         isError: true,
@@ -125,7 +125,7 @@ const ChatInterface: React.FC = () => {
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
                 onKeyPress={handleKeyPress}
-                placeholder="Stel uw vraag over stadsdiensten, openbaar vervoer of verstoringen..."
+                placeholder="Ask me anything..."
                 className="w-full px-4 py-3 pr-12 border border-gray-300 rounded-lg resize-none focus:ring-2 focus:ring-gent-primary focus:border-transparent transition-all duration-200"
                 rows={1}
                 style={{ minHeight: '48px', maxHeight: '120px' }}

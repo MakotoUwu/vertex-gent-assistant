@@ -4,25 +4,17 @@ import { MessageCircle, Menu } from 'lucide-react';
 const Header: React.FC = () => {
   return (
     <header className="bg-white border-b-2 border-gent-primary sticky top-0 z-50">
-      {/* Top bar with Gent branding */}
+      {/* Top bar */}
       <div className="gent-gradient">
         <div className="max-w-7xl mx-auto px-4 py-2">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-4">
-              <img 
-                src="https://stad.gent/themes/custom/gent_base/logo.svg" 
-                alt="Stad Gent" 
-                className="h-8 w-auto"
-                onError={(e) => {
-                  e.currentTarget.style.display = 'none';
-                }}
-              />
               <div className="hidden md:block text-white text-sm">
-                Officiële website van de Stad Gent
+                AI Assistant Platform
               </div>
             </div>
             <div className="text-white text-sm hidden md:block">
-              stad.gent
+              assistant.app
             </div>
           </div>
         </div>
@@ -39,10 +31,10 @@ const Header: React.FC = () => {
                 </div>
                 <div>
                   <h1 className="text-xl font-heading font-semibold text-gent-dark-gray">
-                    Digitale Assistent
+                    AI Assistant
                   </h1>
                   <p className="text-sm text-gent-gray">
-                    Hulp bij stadsdiensten en openbaar vervoer
+                    Your intelligent helper
                   </p>
                 </div>
               </div>
